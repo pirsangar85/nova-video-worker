@@ -1,4 +1,10 @@
-FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg git && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
 RUN pip install --no-cache-dir \
     diffusers>=0.31.0 \
