@@ -22,6 +22,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/nova-video-worker:v4
-            ${{ secrets.DOCKERHUB_USERNAME }}/nova-video-worker:r5
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/nova-video-worker:release5
