@@ -11,7 +11,7 @@ import tempfile
 import os
 
 pipe = None
-MODEL_ID = "Wan-AI/Wan2.1-T2V-1.3B"
+MODEL_ID = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
 CACHE_DIR = "/runpod-volume/models" if os.path.exists("/runpod-volume") else "/tmp/models"
 
 def load_model():
