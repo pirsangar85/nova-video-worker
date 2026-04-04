@@ -1,12 +1,12 @@
 FROM runpod/base:0.6.2-cuda12.2.0
 
-# Install PyTorch with CUDA support first
+# Install PyTorch matching CUDA 12.2
 RUN pip install --no-cache-dir \
-    torch==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cu121
+    torch==2.5.0 torchvision==0.20.0 --index-url https://download.pytorch.org/whl/cu124
 
-# Install video generation deps
+# Install diffusers and deps
 RUN pip install --no-cache-dir \
-    diffusers>=0.31.0 \
+    diffusers>=0.32.0 \
     transformers>=4.44.0 \
     accelerate>=0.33.0 \
     safetensors \
@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir \
     imageio[ffmpeg] \
     imageio-ffmpeg
 
-WORKDIR /app
-COPY handler.py .
+# Copy handler to root
+COPY handler.py /handler.py
 
-CMD ["python3", "-u", "handler.py"]
+CMD ["python3", "-u", "/handler.py"]
