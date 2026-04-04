@@ -10,8 +10,13 @@ import gc
 print("=== NOVA Worker Starting ===", flush=True)
 print(f"Python: {sys.version}", flush=True)
 print(f"PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}", flush=True)
-if torch.cuda.is_available():
-    print(f"GPU: {torch.cuda.get_device_name(0)}, VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB", flush=True)
+try:
+    if torch.cuda.is_available():
+        props = torch.cuda.get_device_properties(0)
+        vram = getattr(props, 'total_memory', 0) or getattr(props, 'total_mem', 0)
+        print(f"GPU: {torch.cuda.get_device_name(0)}, VRAM: {vram / 1e9:.1f}GB", flush=True)
+except Exception as e:
+    print(f"GPU info error (non-fatal): {e}", flush=True)
 
 try:
     import diffusers
