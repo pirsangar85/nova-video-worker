@@ -1,4 +1,9 @@
-import runpod
+"""
+NOVA Video Generator — RunPod Pod Worker
+Wan2.1 Text-to-Video (1.3B)
+Runs as HTTP server on port 8000
+"""
+
 import torch
 import base64
 import tempfile
@@ -6,6 +11,9 @@ import os
 import traceback
 import sys
 import gc
+import json
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 
 print("=== NOVA Worker Starting ===", flush=True)
 print(f"Python: {sys.version}", flush=True)
@@ -18,15 +26,9 @@ try:
 except Exception as e:
     print(f"GPU info error (non-fatal): {e}", flush=True)
 
-try:
-    import diffusers
-    print(f"Diffusers: {diffusers.__version__}", flush=True)
-except Exception as e:
-    print(f"Diffusers import failed: {e}", flush=True)
-
 pipe = None
 MODEL_ID = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
-CACHE_DIR = "/runpod-volume/models" if os.path.exists("/runpod-volume") else "/tmp/models"
+CACHE_DIR = "/workspace/models"
 
 
 def load_model():
@@ -55,12 +57,10 @@ def load_model():
     return pipe
 
 
-def handler(job):
-    global pipe
+def generate_video(inp):
     try:
         from diffusers.utils import export_to_video
 
-        inp = job["input"]
         prompt = inp.get("prompt", "")
         if not prompt:
             return {"error": "No prompt provided"}
@@ -68,7 +68,7 @@ def handler(job):
         negative_prompt = inp.get("negative_prompt", "blurry, low quality, distorted, watermark, text, logo, ugly, deformed")
         width = inp.get("width", 480)
         height = inp.get("height", 832)
-        num_frames = min(inp.get("length", 81), 81)  # Cap at 81 for 1.3B model
+        num_frames = min(inp.get("length", 81), 81)
         steps = inp.get("steps", 30)
         cfg = inp.get("cfg", 6.0)
         seed = inp.get("seed", -1)
@@ -97,12 +97,11 @@ def handler(job):
 
         os.unlink(video_path)
 
-        # Cleanup GPU memory
         del output
         gc.collect()
         torch.cuda.empty_cache()
 
-        print(f"Done! {len(video_b64)} chars, VRAM free: {torch.cuda.mem_get_info()[0]/1e9:.1f}GB", flush=True)
+        print(f"Done! {len(video_b64)} chars", flush=True)
         return {"video": video_b64}
 
     except Exception as e:
@@ -112,5 +111,87 @@ def handler(job):
         return {"error": str(e)}
 
 
-print("Starting RunPod handler...", flush=True)
-runpod.serverless.start({"handler": handler})
+# Job tracking for async mode
+jobs = {}
+job_counter = 0
+job_lock = threading.Lock()
+
+
+class NovaHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ready"}).encode())
+            return
+
+        # GET /status/{job_id}
+        if self.path.startswith("/status/"):
+            job_id = self.path.split("/status/")[1]
+            with job_lock:
+                job = jobs.get(job_id)
+            if job is None:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Job not found"}).encode())
+            else:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(job).encode())
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def do_POST(self):
+        if self.path == "/run":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body)
+            inp = data.get("input", {})
+
+            global job_counter
+            with job_lock:
+                job_counter += 1
+                job_id = f"nova-{job_counter}"
+                jobs[job_id] = {"id": job_id, "status": "IN_QUEUE"}
+
+            # Run in background thread
+            def run_job():
+                with job_lock:
+                    jobs[job_id]["status"] = "IN_PROGRESS"
+                result = generate_video(inp)
+                with job_lock:
+                    if "error" in result:
+                        jobs[job_id]["status"] = "FAILED"
+                        jobs[job_id]["error"] = result["error"]
+                    else:
+                        jobs[job_id]["status"] = "COMPLETED"
+                        jobs[job_id]["output"] = result
+
+            threading.Thread(target=run_job, daemon=True).start()
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"id": job_id, "status": "IN_QUEUE"}).encode())
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Suppress default logging
+
+
+# Pre-load model on startup
+print("Pre-loading model...", flush=True)
+load_model()
+
+print("Starting HTTP server on port 8000...", flush=True)
+server = HTTPServer(("0.0.0.0", 8000), NovaHandler)
+print("NOVA Worker ready! Listening on port 8000", flush=True)
+server.serve_forever()
