@@ -34,12 +34,12 @@ def load_model():
         return pipe
 
     import torch
-    from diffusers import AutoPipelineForTextToVideo
+    from diffusers import DiffusionPipeline
 
     os.makedirs(CACHE_DIR, exist_ok=True)
     print(f"Loading {MODEL_ID} to {CACHE_DIR}...", flush=True)
 
-    pipe = AutoPipelineForTextToVideo.from_pretrained(
+    pipe = DiffusionPipeline.from_pretrained(
         MODEL_ID,
         torch_dtype=torch.float16,
         cache_dir=CACHE_DIR
