@@ -1,4 +1,5 @@
 import runpod
+import torch
 import base64
 import tempfile
 import os
@@ -8,14 +9,9 @@ import gc
 
 print("=== NOVA Worker Starting ===", flush=True)
 print(f"Python: {sys.version}", flush=True)
-
-try:
-    import torch
-    print(f"PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}", flush=True)
-    if torch.cuda.is_available():
-        print(f"GPU: {torch.cuda.get_device_name(0)}, VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f}GB", flush=True)
-except Exception as e:
-    print(f"PyTorch import failed: {e}", flush=True)
+print(f"PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}", flush=True)
+if torch.cuda.is_available():
+    print(f"GPU: {torch.cuda.get_device_name(0)}, VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f}GB", flush=True)
 
 try:
     import diffusers
@@ -33,7 +29,6 @@ def load_model():
     if pipe is not None:
         return pipe
 
-    import torch
     from diffusers import DiffusionPipeline
 
     os.makedirs(CACHE_DIR, exist_ok=True)
@@ -58,7 +53,6 @@ def load_model():
 def handler(job):
     global pipe
     try:
-        import torch
         from diffusers.utils import export_to_video
 
         inp = job["input"]
@@ -69,19 +63,17 @@ def handler(job):
         negative_prompt = inp.get("negative_prompt", "blurry, low quality, distorted, watermark, text, logo, ugly, deformed")
         width = inp.get("width", 480)
         height = inp.get("height", 832)
-        num_frames = inp.get("length", 81)
+        num_frames = min(inp.get("length", 81), 81)  # Cap at 81 for 1.3B model
         steps = inp.get("steps", 30)
         cfg = inp.get("cfg", 6.0)
         seed = inp.get("seed", -1)
-        image_base64 = inp.get("image_base64", None)
 
-        print(f"Job: '{prompt[:50]}' {width}x{height} f={num_frames} s={steps} cfg={cfg} img={'yes' if image_base64 else 'no'}", flush=True)
+        print(f"Job: '{prompt[:50]}' {width}x{height} f={num_frames} s={steps} cfg={cfg}", flush=True)
 
         model = load_model()
         generator = torch.Generator("cuda").manual_seed(seed) if seed >= 0 else None
 
-        # Build generation kwargs
-        gen_kwargs = dict(
+        output = model(
             prompt=prompt,
             negative_prompt=negative_prompt,
             width=width,
@@ -91,24 +83,6 @@ def handler(job):
             guidance_scale=cfg,
             generator=generator,
         )
-
-        # If image provided, decode and pass as first frame
-        if image_base64:
-            try:
-                from PIL import Image
-                import io
-                # Strip data URI prefix if present
-                if "base64," in image_base64:
-                    image_base64 = image_base64.split("base64,")[1]
-                img_bytes = base64.b64decode(image_base64)
-                image = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-                image = image.resize((width, height))
-                gen_kwargs["image"] = image
-                print(f"Using input image as first frame ({image.size})", flush=True)
-            except Exception as e:
-                print(f"Image decode failed, using text-only: {e}", flush=True)
-
-        output = model(**gen_kwargs)
 
         video_path = os.path.join(tempfile.gettempdir(), f"nova_{os.getpid()}.mp4")
         export_to_video(output.frames[0], video_path, fps=24)
@@ -128,10 +102,8 @@ def handler(job):
 
     except Exception as e:
         traceback.print_exc()
-        # Cleanup on error too
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
         return {"error": str(e)}
 
 
