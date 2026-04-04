@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir \
     imageio-ffmpeg==0.5.1 \
     Pillow==11.0.0
 
+# Force cache bust v2
 COPY handler.py /handler.py
 
 CMD ["python3", "-u", "/handler.py"]
