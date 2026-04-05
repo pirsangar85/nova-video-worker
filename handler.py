@@ -77,6 +77,28 @@ def load_model(model_type):
     except Exception:
         pass
 
+    # torch.compile for 30-50% speedup (first run is slow, subsequent runs are fast)
+    try:
+        pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
+        print(f"torch.compile applied to unet!", flush=True)
+    except Exception:
+        try:
+            pipe.transformer = torch.compile(pipe.transformer, mode="reduce-overhead", fullgraph=True)
+            print(f"torch.compile applied to transformer!", flush=True)
+        except Exception:
+            print("torch.compile not available for this model", flush=True)
+
+    # DeepCache for 2x speedup on diffusion steps
+    try:
+        from diffusers.utils import USE_PEFT_BACKEND
+        from DeepCache import DeepCacheSDHelper
+        helper = DeepCacheSDHelper(pipe=pipe)
+        helper.set_params(cache_interval=3, cache_branch_id=0)
+        helper.enable()
+        print("DeepCache enabled!", flush=True)
+    except Exception:
+        print("DeepCache not available, skipping", flush=True)
+
     models[model_type] = pipe
     current_model = model_type
     print(f"{model_type} model loaded!", flush=True)

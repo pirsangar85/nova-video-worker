@@ -10,7 +10,8 @@ RUN pip install --no-cache-dir \
     imageio==2.37.3 \
     imageio-ffmpeg==0.6.0 \
     opencv-python-headless \
-    Pillow
+    Pillow \
+    DeepCache
 
 COPY handler.py /handler.py
 
