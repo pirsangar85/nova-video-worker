@@ -1,7 +1,7 @@
 """
-NOVA Video Generator — Dual Model Pod Worker
-Fast mode: LTX-Video (5-10 sec)
-Quality mode: Wan2.1-T2V (2-3 min)
+NOVA Video Generator — RunPod Serverless Worker
+Fast mode: LTX-Video (~4s clips)
+Quality mode: Wan2.1-T2V (~3.5s clips)
 Image-to-Video: Wan2.1-I2V
 """
 
@@ -12,11 +12,9 @@ import os
 import traceback
 import sys
 import gc
-import json
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
+import runpod
 
-print("=== NOVA Worker Starting ===", flush=True)
+print("=== NOVA Serverless Worker Starting ===", flush=True)
 print(f"Python: {sys.version}", flush=True)
 print(f"PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}", flush=True)
 try:
@@ -83,12 +81,14 @@ def load_model(model_type):
     return pipe
 
 
-def generate_video(inp):
+def handler(job):
+    """RunPod serverless handler"""
     try:
         from diffusers.utils import export_to_video
         from PIL import Image
         import io
 
+        inp = job["input"]
         prompt = inp.get("prompt", "")
         if not prompt:
             return {"error": "No prompt provided"}
@@ -109,7 +109,6 @@ def generate_video(inp):
             steps = inp.get("steps", 25)
             cfg = inp.get("cfg", 6.0)
 
-            # Decode image
             if "base64," in image_base64:
                 image_base64 = image_base64.split("base64,")[1]
             img_bytes = base64.b64decode(image_base64)
@@ -190,85 +189,9 @@ def generate_video(inp):
         return {"error": str(e)}
 
 
-# Job tracking
-jobs = {}
-job_counter = 0
-job_lock = threading.Lock()
-
-
-class NovaHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/health":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "ready", "mode": current_model or "none"}).encode())
-            return
-
-        if self.path.startswith("/status/"):
-            job_id = self.path.split("/status/")[1]
-            with job_lock:
-                job = jobs.get(job_id)
-            if job is None:
-                self.send_response(404)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": "Job not found"}).encode())
-            else:
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(job).encode())
-            return
-
-        self.send_response(404)
-        self.end_headers()
-
-    def do_POST(self):
-        if self.path == "/run":
-            content_length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_length)
-            data = json.loads(body)
-            inp = data.get("input", {})
-
-            global job_counter
-            with job_lock:
-                job_counter += 1
-                job_id = f"nova-{job_counter}"
-                jobs[job_id] = {"id": job_id, "status": "IN_QUEUE"}
-
-            def run_job():
-                with job_lock:
-                    jobs[job_id]["status"] = "IN_PROGRESS"
-                result = generate_video(inp)
-                with job_lock:
-                    if "error" in result:
-                        jobs[job_id]["status"] = "FAILED"
-                        jobs[job_id]["error"] = result["error"]
-                    else:
-                        jobs[job_id]["status"] = "COMPLETED"
-                        jobs[job_id]["output"] = result
-
-            threading.Thread(target=run_job, daemon=True).start()
-
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"id": job_id, "status": "IN_QUEUE"}).encode())
-            return
-
-        self.send_response(404)
-        self.end_headers()
-
-    def log_message(self, format, *args):
-        pass
-
-
-# Pre-load fast model
+# Pre-load fast model on cold start
 print("Pre-loading fast model...", flush=True)
 load_model("fast")
 
-print("Starting HTTP server on port 8000...", flush=True)
-server = HTTPServer(("0.0.0.0", 8000), NovaHandler)
-print("NOVA Worker ready! Fast + Quality + I2V modes on port 8000", flush=True)
-server.serve_forever()
+print("NOVA Serverless Worker ready!", flush=True)
+runpod.serverless.start({"handler": handler})

@@ -10,10 +10,9 @@ RUN pip install --no-cache-dir \
     imageio==2.37.3 \
     imageio-ffmpeg==0.6.0 \
     opencv-python-headless \
-    Pillow
+    Pillow \
+    runpod
 
 COPY handler.py /handler.py
-
-EXPOSE 8000
 
 CMD ["bash", "-c", "HF_HUB_DISABLE_XET=1 python3 -u /handler.py"]
