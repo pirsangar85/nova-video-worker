@@ -77,27 +77,20 @@ def load_model(model_type):
     except Exception:
         pass
 
-    # torch.compile for 30-50% speedup (first run is slow, subsequent runs are fast)
+    # torch.compile for 30-50% speedup
     try:
-        pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
-        print(f"torch.compile applied to unet!", flush=True)
-    except Exception:
-        try:
-            pipe.transformer = torch.compile(pipe.transformer, mode="reduce-overhead", fullgraph=True)
-            print(f"torch.compile applied to transformer!", flush=True)
-        except Exception:
-            print("torch.compile not available for this model", flush=True)
-
-    # DeepCache for 2x speedup on diffusion steps
-    try:
-        from diffusers.utils import USE_PEFT_BACKEND
-        from DeepCache import DeepCacheSDHelper
-        helper = DeepCacheSDHelper(pipe=pipe)
-        helper.set_params(cache_interval=3, cache_branch_id=0)
-        helper.enable()
-        print("DeepCache enabled!", flush=True)
-    except Exception:
-        print("DeepCache not available, skipping", flush=True)
+        import torch._dynamo
+        torch._dynamo.config.suppress_errors = True
+        target = getattr(pipe, 'unet', None) or getattr(pipe, 'transformer', None)
+        if target is not None:
+            compiled = torch.compile(target, mode="reduce-overhead")
+            if hasattr(pipe, 'unet'):
+                pipe.unet = compiled
+            else:
+                pipe.transformer = compiled
+            print(f"torch.compile applied!", flush=True)
+    except Exception as e:
+        print(f"torch.compile skipped: {e}", flush=True)
 
     models[model_type] = pipe
     current_model = model_type
