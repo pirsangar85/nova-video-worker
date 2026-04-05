@@ -77,21 +77,6 @@ def load_model(model_type):
     except Exception:
         pass
 
-    # torch.compile for 30-50% speedup
-    try:
-        import torch._dynamo
-        torch._dynamo.config.suppress_errors = True
-        target = getattr(pipe, 'unet', None) or getattr(pipe, 'transformer', None)
-        if target is not None:
-            compiled = torch.compile(target, mode="reduce-overhead")
-            if hasattr(pipe, 'unet'):
-                pipe.unet = compiled
-            else:
-                pipe.transformer = compiled
-            print(f"torch.compile applied!", flush=True)
-    except Exception as e:
-        print(f"torch.compile skipped: {e}", flush=True)
-
     models[model_type] = pipe
     current_model = model_type
     print(f"{model_type} model loaded!", flush=True)
