@@ -1,7 +1,5 @@
 FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
 
-RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ && rm -rf /var/lib/apt/lists/*
-
 RUN pip install --no-cache-dir \
     diffusers==0.34.0 \
     transformers==4.48.0 \
