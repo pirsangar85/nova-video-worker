@@ -2,6 +2,7 @@
 NOVA Video Generator — Dual Model Pod Worker
 Fast mode: LTX-Video (5-10 sec)
 Quality mode: Wan2.1-T2V (2-3 min)
+Image-to-Video: Wan2.1-I2V
 """
 
 import torch
@@ -26,104 +27,117 @@ try:
 except Exception:
     pass
 
-fast_pipe = None
-quality_pipe = None
+# Model registry
+models = {}
 FAST_MODEL = "Lightricks/LTX-Video-0.9.1"
 QUALITY_MODEL = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+I2V_MODEL = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
 CACHE_DIR = "/workspace/models"
-current_mode = None  # Track which model is loaded to manage VRAM
+current_model = None
 
 
-def load_fast_model():
-    global fast_pipe, quality_pipe, current_mode
-    if fast_pipe is not None:
-        return fast_pipe
+def unload_all():
+    global models, current_model
+    for name in list(models.keys()):
+        del models[name]
+    models = {}
+    current_model = None
+    gc.collect()
+    torch.cuda.empty_cache()
 
-    # Unload quality model to free VRAM
-    if quality_pipe is not None:
-        print("Unloading quality model...", flush=True)
-        quality_pipe = None
-        gc.collect()
-        torch.cuda.empty_cache()
 
-    from diffusers import LTXPipeline
+def load_model(model_type):
+    global models, current_model
 
+    if model_type in models and models[model_type] is not None:
+        return models[model_type]
+
+    # Unload other models to free VRAM
+    unload_all()
     os.makedirs(CACHE_DIR, exist_ok=True)
-    print(f"Loading FAST model: {FAST_MODEL}...", flush=True)
 
-    fast_pipe = LTXPipeline.from_pretrained(
-        FAST_MODEL,
-        torch_dtype=torch.float16,
-        cache_dir=CACHE_DIR
-    )
-    fast_pipe.to("cuda")
+    if model_type == "fast":
+        from diffusers import LTXPipeline
+        print(f"Loading FAST: {FAST_MODEL}...", flush=True)
+        pipe = LTXPipeline.from_pretrained(FAST_MODEL, torch_dtype=torch.float16, cache_dir=CACHE_DIR)
+    elif model_type == "quality":
+        from diffusers import DiffusionPipeline
+        print(f"Loading QUALITY: {QUALITY_MODEL}...", flush=True)
+        pipe = DiffusionPipeline.from_pretrained(QUALITY_MODEL, torch_dtype=torch.float16, cache_dir=CACHE_DIR)
+    elif model_type == "i2v":
+        from diffusers import DiffusionPipeline
+        print(f"Loading I2V: {I2V_MODEL}...", flush=True)
+        pipe = DiffusionPipeline.from_pretrained(I2V_MODEL, torch_dtype=torch.float16, cache_dir=CACHE_DIR)
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
+
+    pipe.to("cuda")
     try:
-        fast_pipe.enable_vae_slicing()
+        pipe.enable_vae_slicing()
     except Exception:
         pass
 
-    current_mode = "fast"
-    print("Fast model loaded!", flush=True)
-    return fast_pipe
-
-
-def load_quality_model():
-    global fast_pipe, quality_pipe, current_mode
-    if quality_pipe is not None:
-        return quality_pipe
-
-    # Unload fast model to free VRAM
-    if fast_pipe is not None:
-        print("Unloading fast model...", flush=True)
-        fast_pipe = None
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    from diffusers import DiffusionPipeline
-
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    print(f"Loading QUALITY model: {QUALITY_MODEL}...", flush=True)
-
-    quality_pipe = DiffusionPipeline.from_pretrained(
-        QUALITY_MODEL,
-        torch_dtype=torch.float16,
-        cache_dir=CACHE_DIR
-    )
-    quality_pipe.to("cuda")
-    try:
-        quality_pipe.enable_vae_slicing()
-    except Exception:
-        pass
-
-    current_mode = "quality"
-    print("Quality model loaded!", flush=True)
-    return quality_pipe
+    models[model_type] = pipe
+    current_model = model_type
+    print(f"{model_type} model loaded!", flush=True)
+    return pipe
 
 
 def generate_video(inp):
     try:
         from diffusers.utils import export_to_video
+        from PIL import Image
+        import io
 
         prompt = inp.get("prompt", "")
         if not prompt:
             return {"error": "No prompt provided"}
 
-        mode = inp.get("mode", "fast")  # "fast" or "quality"
+        mode = inp.get("mode", "fast")
         negative_prompt = inp.get("negative_prompt", "blurry, low quality, distorted, watermark, text, logo, ugly, deformed")
         width = inp.get("width", 480)
         height = inp.get("height", 832)
         seed = inp.get("seed", -1)
+        image_base64 = inp.get("image_base64", None)
 
         generator = torch.Generator("cuda").manual_seed(seed) if seed >= 0 else None
 
-        if mode == "quality":
-            # Wan2.1 — high quality, slower
+        # If image provided, use I2V model
+        if image_base64:
+            mode = "i2v"
+            num_frames = min(inp.get("length", 81), 81)
+            steps = inp.get("steps", 25)
+            cfg = inp.get("cfg", 6.0)
+
+            # Decode image
+            if "base64," in image_base64:
+                image_base64 = image_base64.split("base64,")[1]
+            img_bytes = base64.b64decode(image_base64)
+            image = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+            image = image.resize((width, height))
+
+            print(f"[I2V] '{prompt[:50]}' {width}x{height} f={num_frames} s={steps}", flush=True)
+            model = load_model("i2v")
+
+            output = model(
+                prompt=prompt,
+                image=image,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                num_frames=num_frames,
+                num_inference_steps=steps,
+                guidance_scale=cfg,
+                generator=generator,
+            )
+
+        elif mode == "quality":
             num_frames = min(inp.get("length", 81), 81)
             steps = inp.get("steps", 25)
             cfg = inp.get("cfg", 6.0)
 
             print(f"[QUALITY] '{prompt[:50]}' {width}x{height} f={num_frames} s={steps}", flush=True)
-            model = load_quality_model()
+            model = load_model("quality")
 
             output = model(
                 prompt=prompt,
@@ -135,14 +149,14 @@ def generate_video(inp):
                 guidance_scale=cfg,
                 generator=generator,
             )
+
         else:
-            # LTX-Video — fast mode
             num_frames = min(inp.get("length", 49), 97)
             steps = inp.get("steps", 8)
             cfg = inp.get("cfg", 3.0)
 
             print(f"[FAST] '{prompt[:50]}' {width}x{height} f={num_frames} s={steps}", flush=True)
-            model = load_fast_model()
+            model = load_model("fast")
 
             output = model(
                 prompt=prompt,
@@ -188,7 +202,7 @@ class NovaHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "ready", "mode": current_mode}).encode())
+            self.wfile.write(json.dumps({"status": "ready", "mode": current_model or "none"}).encode())
             return
 
         if self.path.startswith("/status/"):
@@ -250,11 +264,11 @@ class NovaHandler(BaseHTTPRequestHandler):
         pass
 
 
-# Pre-load fast model (most common)
+# Pre-load fast model
 print("Pre-loading fast model...", flush=True)
-load_fast_model()
+load_model("fast")
 
 print("Starting HTTP server on port 8000...", flush=True)
 server = HTTPServer(("0.0.0.0", 8000), NovaHandler)
-print("NOVA Worker ready! Fast + Quality modes available on port 8000", flush=True)
+print("NOVA Worker ready! Fast + Quality + I2V modes on port 8000", flush=True)
 server.serve_forever()
