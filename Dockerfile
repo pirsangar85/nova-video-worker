@@ -1,6 +1,5 @@
-FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
 
-# Install all dependencies during build — never install at runtime
 RUN pip install --no-cache-dir \
     diffusers==0.34.0 \
     transformers==4.48.0 \
@@ -10,11 +9,11 @@ RUN pip install --no-cache-dir \
     ftfy==6.3.1 \
     imageio==2.37.3 \
     imageio-ffmpeg==0.6.0 \
-    opencv-python-headless==4.13.0.92 \
+    opencv-python-headless \
     Pillow
 
-# Copy handler
 COPY handler.py /handler.py
 
-# Auto-start: handler runs automatically when container starts
+EXPOSE 8000
+
 CMD ["bash", "-c", "HF_HUB_DISABLE_XET=1 python3 -u /handler.py"]
