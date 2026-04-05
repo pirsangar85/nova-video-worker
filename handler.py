@@ -105,7 +105,7 @@ def generate_video(inp):
         # If image provided, use I2V model
         if image_base64:
             mode = "i2v"
-            num_frames = min(inp.get("length", 121), 161)
+            num_frames = min(inp.get("length", 81), 81)
             steps = inp.get("steps", 25)
             cfg = inp.get("cfg", 6.0)
 
@@ -132,7 +132,7 @@ def generate_video(inp):
             )
 
         elif mode == "quality":
-            num_frames = min(inp.get("length", 121), 161)
+            num_frames = min(inp.get("length", 81), 81)
             steps = inp.get("steps", 25)
             cfg = inp.get("cfg", 6.0)
 
@@ -151,7 +151,7 @@ def generate_video(inp):
             )
 
         else:
-            num_frames = min(inp.get("length", 121), 257)
+            num_frames = min(inp.get("length", 97), 97)
             steps = inp.get("steps", 8)
             cfg = inp.get("cfg", 3.0)
 
